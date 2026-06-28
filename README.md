@@ -13,6 +13,16 @@
 
 IF/ID, ID/EX, EX/MEM, and MEM/WB pipeline registers
 
+The implementation supports standard instructions from the MIPS ISA, including:
+```bash
+- R-type (Register): add, sub, and, or, slt, xor, xnor — opcode + rs + rt + rd + shamt + funct
+```
+```bash
+- I-type (Immediate): addi, lw, sw, slt, beq, bne — opcode + rs + rt + immediate
+```
+```bash
+- J-type (Jump): j — opcode + address
+```
 ## Features
 ```bash
 * Full forwarding
