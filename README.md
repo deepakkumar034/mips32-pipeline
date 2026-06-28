@@ -24,7 +24,7 @@ IF/ID, ID/EX, EX/MEM, and MEM/WB pipeline registers
 - J-type (Jump): j — opcode + address
 ```
 ## Features
-
+```bash
 ### Full forwarding
 The processor implements full data forwarding to minimize pipeline stalls caused by RAW (Read After Write) dependencies.
 
@@ -36,8 +36,8 @@ MEM/WB → EX
 Forwarding control signals: ForwardAE, ForwardBE
 
 This allows dependent ALU instructions to execute without waiting for register write-back.
-
-
+```
+```bash
 ### Load-use hazard detection
 It cannot be resolved through forwarding alone because the loaded data becomes available after the MEM stage.
 
@@ -53,7 +53,8 @@ Inserts a bubble into the EX stage
 Introduces a 1-cycle stall
 
 Control signals: stallF, stallD, flushE
-
+```
+```bash
 ### Branch Handling
 Branches are resolved in the Decode stage to reduce branch penalty.
 
@@ -66,7 +67,8 @@ Branch target computation in Decode
 Supported instructions: beq, bne
 
 A unified branch implementation is used through the opcode[0] XOR technique, allowing both instructions to share the same comparison hardware.
-
+```
+```bash
 ### Jump Instruction : j
 
 The processor supports the MIPS Jump (j) instruction.
@@ -78,6 +80,6 @@ Immediate PC redirection
 1-cycle flush penalty
 
 When a jump is detected, incorrectly fetched instructions are flushed and execution continues from the target address.
-
+```
 
 
