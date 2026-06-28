@@ -3,14 +3,15 @@
 
 <img width="1280" height="771" alt="image" src="https://github.com/user-attachments/assets/eb54e2f1-9046-43ae-a196-7d560b79b114" />
 
-## Pipeline Stages
+## 5-stage pipelined datapath
 
-The processor is divided into 5 stages:
 * Instruction Fetch (IF)        : PC update, instruction fetch
 * Instruction Decode (ID)       : Register read, control decode, branch resolve
 * Execute (EX)                  : ALU operation, forwarding muxes
 * Memory Access (MEM)           : Data memory read/write
 * Write Back (WB)               : Result mux, register writeback
+
+IF/ID, ID/EX, EX/MEM, and MEM/WB pipeline registers
 
 ## Features
 * Full forwarding — EX→EX and MEM→EX data forwarding
