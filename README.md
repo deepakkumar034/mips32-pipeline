@@ -14,11 +14,12 @@
 IF/ID, ID/EX, EX/MEM, and MEM/WB pipeline registers
 
 ## Features
+```bash
 * Full forwarding — EX→EX and MEM→EX data forwarding
 * Load-use hazard detection — 1-cycle stall with bubble insertion
 * Branch resolved in Decode — early comparator (equalD), 1-cycle penalty
 * beq and bne — unified using opcode[0] XOR trick
 * Jump (j) — target computed in Decode, 1-cycle flush
-* Branch forwarding — MEM→Decode comparator (forwardAD, forwardBD)
+```
 
 
