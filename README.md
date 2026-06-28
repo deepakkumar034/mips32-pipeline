@@ -29,11 +29,57 @@ ForwardBE
 
 This allows dependent ALU instructions to execute without waiting for register write-back.
 ```
+``` bash
+* Load-use hazard detection — Load-use hazards cannot be resolved through forwarding alone because the loaded data becomes available after the MEM stage.
 
-* Load-use hazard detection — 1-cycle stall with bubble insertion
-* Branch resolved in Decode — early comparator (equalD), 1-cycle penalty
-* beq and bne — unified using opcode[0] XOR trick
-* Jump (j) — target computed in Decode, 1-cycle flush
+Example:
+
+lw  $t0, 0($t1)
+add $t2, $t0, $t3
+
+The Hazard Detection Unit (HDU) automatically:
+
+Stalls the PC and IF/ID register
+Inserts a bubble into the EX stage
+Introduces a 1-cycle stall
+
+Control signals:
+
+stallF
+stallD
+flushE
+```
+``` bash
+* Branch Handling
+
+Branches are resolved in the Decode stage to reduce branch penalty.
+
+Features:
+
+Early branch comparator (equalD)
+Branch target computation in Decode
+1-cycle branch penalty
+
+Supported instructions:
+
+beq
+bne
+
+A unified branch implementation is used through the opcode[0] XOR technique, allowing both instructions to share the same comparison hardware.
+```
+``` bash
+* Jump (j) — Jump Instruction
+
+The processor supports the MIPS Jump (j) instruction.
+
+Features:
+
+Jump target generated in Decode stage
+Immediate PC redirection
+1-cycle flush penalty
+
+When a jump is detected, incorrectly fetched instructions are flushed and execution continues from the target address.
+```
 
 
 
