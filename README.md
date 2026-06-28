@@ -15,7 +15,7 @@ IF/ID, ID/EX, EX/MEM, and MEM/WB pipeline registers
 
 ## Features
 ```bash
-Full forwarding —  The processor implements full data forwarding to minimize pipeline stalls caused by RAW (Read After Write) dependencies.
+* Full forwarding —  The processor implements full data forwarding to minimize pipeline stalls caused by RAW (Read After Write) dependencies.
 
 Supported forwarding paths:
 
@@ -29,6 +29,7 @@ ForwardBE
 
 This allows dependent ALU instructions to execute without waiting for register write-back.
 ```
+
 * Load-use hazard detection — 1-cycle stall with bubble insertion
 * Branch resolved in Decode — early comparator (equalD), 1-cycle penalty
 * beq and bne — unified using opcode[0] XOR trick
