@@ -5,7 +5,7 @@
 
 ## Pipeline Stages
 
-The processor is divided into the following stages:
+The processor is divided into 5 stages:
 * Instruction Fetch (IF)        : PC update, instruction fetch
 * Instruction Decode (ID)       : Register read, control decode, branch resolve
 * Execute (EX)                  : ALU operation, forwarding muxes
@@ -19,4 +19,5 @@ The processor is divided into the following stages:
 * beq and bne — unified using opcode[0] XOR trick
 * Jump (j) — target computed in Decode, 1-cycle flush
 * Branch forwarding — MEM→Decode comparator (forwardAD, forwardBD)
+
 
