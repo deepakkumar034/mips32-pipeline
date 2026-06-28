@@ -1,1 +1,469 @@
+mips_pipeline without hazards
 
+
+module mux #(parameter WIDTH = 32) (
+    input  [WIDTH-1:0] d0, d1,
+    input              s,
+    output [WIDTH-1:0] y
+);
+    assign y = s ? d1 : d0;
+endmodule
+
+// ─── IF ───────────────────────────────────────────────────────────────────────
+module fetch_stage(
+    input         clk, reset,
+    input  [31:0] pcbranchM,
+    input         pcsrcM,
+    output reg [31:0] pcF,
+    output [31:0] pcplus4F,
+    output [31:0] instrF
+);
+    wire [31:0] pcnextF;
+
+    mux #(32) pc_mux(pcplus4F, pcbranchM, pcsrcM, pcnextF);
+
+    always @(posedge clk) begin
+        if (reset) pcF <= 32'h00000000;
+        else       pcF <= pcnextF;
+    end
+
+    assign pcplus4F = pcF + 4;
+    instruction_mem imem(pcF, instrF);
+endmodule
+
+module instruction_mem(
+    input  [31:0] a,
+    output [31:0] instr
+);
+    reg [31:0] RAM [255:0];
+    integer i;
+    initial begin
+        for (i = 0; i < 256; i = i + 1) RAM[i] = 32'b0;
+        RAM[0] = 32'h20080005;   // addi $t0, $zero, 5
+        RAM[1] = 32'h20090007;   // addi $t1, $zero, 7
+        RAM[2] = 32'h00000000;   // nop
+        RAM[3] = 32'h01095020;   // add  $t2, $t0, $t1
+        RAM[4] = 32'h00000000;   // nop
+        RAM[5] = 32'hAC0A0000;   // sw   $t2, 0($zero)
+        RAM[6] = 32'h8C0B0000;   // lw   $t3, 0($zero)
+        RAM[7] = 32'h00000000;   // nop
+        RAM[8] = 32'h114B0001;   // beq  $t2, $t3, +1
+        RAM[9] = 32'h200D0037;   // addi $t5, $zero, 55
+    end
+    assign instr = RAM[a[9:2]];
+endmodule
+
+// ─── IF/ID ────────────────────────────────────────────────────────────────────
+module IF_ID_reg(
+    input         clk, reset,
+    input  [31:0] instrF, pcplus4F,
+    output reg [31:0] instrD, pcplus4D
+);
+    always @(posedge clk) begin
+        if (reset) begin instrD <= 32'b0; pcplus4D <= 32'b0; end
+        else       begin instrD <= instrF; pcplus4D <= pcplus4F; end
+    end
+endmodule
+
+// ─── ID ───────────────────────────────────────────────────────────────────────
+module reg_file(
+    input         clk, we,
+    input  [4:0]  a1, a2, a3,
+    input  [31:0] wd,
+    output [31:0] rd1, rd2
+);
+    reg [31:0] rf [31:0];
+    integer i;
+    initial begin
+        for (i = 0; i < 32; i = i + 1) rf[i] = 32'b0;
+    end
+    always @(posedge clk) begin
+        if (we && (a3 != 0)) rf[a3] <= wd;
+    end
+    assign rd1 = (a1 == 0) ? 32'b0 : rf[a1];
+    assign rd2 = (a2 == 0) ? 32'b0 : rf[a2];
+endmodule
+
+module sign_extend(input [15:0] a, output [31:0] y);
+    assign y = {{16{a[15]}}, a};
+endmodule
+
+module control_unit(
+    input  [5:0] opcode, funct,
+    output       regwrite, memtoreg, memwrite, branch, alusrc, regdst,
+    output reg [3:0] alucontrol
+);
+    wire [1:0] aluop;
+    reg  [7:0] controls;
+    assign {regwrite, memtoreg, memwrite, branch, alusrc, regdst, aluop} = controls;
+
+    always @(*) begin
+        case (opcode)
+            6'b000000: controls = 8'b11000010; // R-type
+            6'b100011: controls = 8'b10100100; // lw
+            6'b101011: controls = 8'b00100000; // sw  -- BUG FIX: was missing regwrite=0 correctly but memwrite must be 1
+            6'b000100: controls = 8'b00010001; // beq
+            6'b001000: controls = 8'b10100000; // addi
+            default:   controls = 8'bxxxxxxxx;
+        endcase
+    end
+
+    always @(*) begin
+        case (aluop)
+            2'b00: alucontrol = 4'b0010; // add (lw/sw)
+            2'b01: alucontrol = 4'b0110; // sub (beq)
+            2'b10: case (funct)
+                6'b100000: alucontrol = 4'b0010; // add
+                6'b100010: alucontrol = 4'b0110; // sub
+                6'b100100: alucontrol = 4'b0000; // and
+                6'b100101: alucontrol = 4'b0001; // or
+                6'b101010: alucontrol = 4'b0111; // slt
+                default:   alucontrol = 4'b0000;
+            endcase
+            default: alucontrol = 4'b0000;
+        endcase
+    end
+endmodule
+
+module decode_stage(
+    input         clk, regwriteW,
+    input  [31:0] instrD, pcplus4D, resultW,
+    input  [4:0]  writeregW,
+    output [31:0] rd1D, rd2D, signimmD,
+    output [4:0]  rtD, rdD,
+    output        regwriteD, memtoregD, memwriteD, branchD, alusrcD, regdstD,
+    output [3:0]  alucontrolD
+);
+    control_unit cu(
+        instrD[31:26], instrD[5:0],
+        regwriteD, memtoregD, memwriteD, branchD, alusrcD, regdstD, alucontrolD
+    );
+    reg_file rf(
+        clk, regwriteW,
+        instrD[25:21], instrD[20:16], writeregW,
+        resultW, rd1D, rd2D
+    );
+    sign_extend se(instrD[15:0], signimmD);
+    assign rtD = instrD[20:16];
+    assign rdD = instrD[15:11];
+endmodule
+
+// ─── ID/EX ───────────────────────────────────────────────────────────────────
+module ID_EX_reg(
+    input         clk, reset,
+    input         regwriteD, memtoregD, memwriteD, branchD, alusrcD, regdstD,
+    input  [3:0]  alucontrolD,
+    input  [31:0] rd1D, rd2D, signimmD, pcplus4D,
+    input  [4:0]  rtD, rdD,
+
+    output reg        regwriteE, memtoregE, memwriteE, branchE, alusrcE, regdstE,
+    output reg [3:0]  alucontrolE,
+    output reg [31:0] srcaE, writedataE, signimmE, pcplus4E,
+    output reg [4:0]  rtE, rdE
+);
+    always @(posedge clk) begin
+        if (reset) begin
+            {regwriteE, memtoregE, memwriteE, branchE, alusrcE, regdstE} <= 6'b0;
+            alucontrolE <= 4'b0;
+            srcaE <= 0; writedataE <= 0; signimmE <= 0; pcplus4E <= 0;
+            rtE <= 0; rdE <= 0;
+        end else begin
+            regwriteE   <= regwriteD;
+            memtoregE   <= memtoregD;
+            memwriteE   <= memwriteD;
+            branchE     <= branchD;
+            alusrcE     <= alusrcD;
+            regdstE     <= regdstD;
+            alucontrolE <= alucontrolD;
+            srcaE       <= rd1D;
+            writedataE  <= rd2D;   // RD2 becomes writedata (for sw) and srcb candidate
+            signimmE    <= signimmD;
+            pcplus4E    <= pcplus4D;
+            rtE         <= rtD;
+            rdE         <= rdD;
+        end
+    end
+endmodule
+
+// ─── EX ───────────────────────────────────────────────────────────────────────
+module execute_stage(
+    input  [3:0]  alucontrolE,
+    input         alusrcE, regdstE,
+    input  [4:0]  rtE, rdE,
+    input  [31:0] srcaE,
+    input  [31:0] writedataE,   // RD2 from ID/EX — also forwarded to EX/MEM as write data
+    input  [31:0] signimmE, pcplus4E,
+    output [31:0] aluoutE,
+    output [31:0] writedataE_out, // passed straight through to EX/MEM
+    output [31:0] pcbranchE,
+    output [4:0]  writeregE,
+    output        zeroE
+);
+    wire [31:0] srcbE, shift2E;
+
+    // ALU src B: either RD2 or sign-extended immediate
+    mux #(32) alu_mux(writedataE, signimmE, alusrcE, srcbE);
+
+    alu alu_unit(srcaE, srcbE, alucontrolE, aluoutE, zeroE);
+
+    // Destination register: RT (I-type) or RD (R-type)
+    mux #(5) reg_mux(rtE, rdE, regdstE, writeregE);
+
+    // Branch target: PCPlus4E + (SignImm << 2)
+    shift_left2 sl2(signimmE, shift2E);
+    assign pcbranchE   = pcplus4E + shift2E;
+
+    // Write data passes straight through (for sw)
+    assign writedataE_out = writedataE;
+endmodule
+
+module shift_left2(input [31:0] a, output [31:0] y);
+    assign y = a << 2;
+endmodule
+
+module alu(
+    input  [31:0] a, b,
+    input  [3:0]  alucontrol,
+    output reg [31:0] result,
+    output        zero
+);
+    always @(*) begin
+        case (alucontrol)
+            4'b0000: result = a & b;
+            4'b0001: result = a | b;
+            4'b0010: result = a + b;
+            4'b0110: result = a - b;
+            4'b0111: result = (a < b) ? 1 : 0;
+            4'b1100: result = ~(a | b);
+            default: result = 0;
+        endcase
+    end
+    assign zero = (result == 0);
+endmodule
+
+// ─── EX/MEM ───────────────────────────────────────────────────────────────────
+module EX_MEM_reg(
+    input         clk, reset,
+    input         regwriteE, memtoregE, memwriteE, branchE, zeroE,
+    input  [31:0] aluoutE, writedataE, pcbranchE,
+    input  [4:0]  writeregE,
+
+    output reg        regwriteM, memtoregM, memwriteM, branchM, zeroM,
+    output reg [31:0] aluoutM, writedataM, pcbranchM,
+    output reg [4:0]  writeregM
+);
+    always @(posedge clk) begin
+        if (reset) begin
+            {regwriteM, memtoregM, memwriteM, branchM, zeroM} <= 5'b0;
+            aluoutM <= 0; writedataM <= 0; pcbranchM <= 0; writeregM <= 0;
+        end else begin
+            regwriteM  <= regwriteE;
+            memtoregM  <= memtoregE;
+            memwriteM  <= memwriteE;
+            branchM    <= branchE;
+            zeroM      <= zeroE;
+            aluoutM    <= aluoutE;
+            writedataM <= writedataE;
+            pcbranchM  <= pcbranchE;
+            writeregM  <= writeregE;
+        end
+    end
+endmodule
+
+// ─── MEM ──────────────────────────────────────────────────────────────────────
+module memory_stage(
+    input         clk,
+    input         memwriteM, branchM, zeroM,
+    input  [31:0] aluoutM, writedataM,
+    output        pcsrcM,
+    output [31:0] readdataM
+);
+    data_memory dmem(clk, memwriteM, aluoutM, writedataM, readdataM);
+    assign pcsrcM = branchM & zeroM;
+endmodule
+
+module data_memory(
+    input         clk, we,
+    input  [31:0] a, wd,
+    output [31:0] rd
+);
+    reg [31:0] RAM [255:0];
+    integer i;
+    initial begin
+        for (i = 0; i < 256; i = i + 1) RAM[i] = 32'b0; // FIX: initialize RAM
+    end
+    always @(posedge clk) begin
+        if (we) RAM[a[9:2]] <= wd;
+    end
+    assign rd = RAM[a[9:2]];
+endmodule
+
+// ─── MEM/WB ───────────────────────────────────────────────────────────────────
+module MEM_WB_reg(
+    input         clk, reset,
+    input         regwriteM, memtoregM,
+    input  [31:0] aluoutM, readdataM,
+    input  [4:0]  writeregM,
+
+    output reg        regwriteW, memtoregW,
+    output reg [31:0] aluoutW, readdataW,
+    output reg [4:0]  writeregW
+);
+    always @(posedge clk) begin
+        if (reset) begin
+            {regwriteW, memtoregW} <= 2'b0;
+            aluoutW <= 0; readdataW <= 0; writeregW <= 0;
+        end else begin
+            regwriteW  <= regwriteM;
+            memtoregW  <= memtoregM;
+            aluoutW    <= aluoutM;
+            readdataW  <= readdataM;
+            writeregW  <= writeregM;
+        end
+    end
+endmodule
+
+// ─── WB ───────────────────────────────────────────────────────────────────────
+module writeback_stage(
+    input         memtoregW,
+    input  [31:0] aluoutW, readdataW,
+    output [31:0] resultW
+);
+    mux #(32) mux_wb(aluoutW, readdataW, memtoregW, resultW);
+endmodule
+
+// ─── TOP LEVEL ────────────────────────────────────────────────────────────────
+module mips_pipeline(
+    input clk, reset
+);
+    // IF
+    wire [31:0] pcF, pcplus4F, instrF;
+
+    // IF/ID
+    wire [31:0] instrD, pcplus4D;
+
+    // ID
+    wire        regwriteD, memtoregD, memwriteD, branchD, alusrcD, regdstD;
+    wire [3:0]  alucontrolD;
+    wire [31:0] rd1D, rd2D, signimmD;
+    wire [4:0]  rtD, rdD;
+
+    // ID/EX
+    wire        regwriteE, memtoregE, memwriteE, branchE, alusrcE, regdstE;
+    wire [3:0]  alucontrolE;
+    wire [31:0] srcaE, writedataE, signimmE, pcplus4E;
+    wire [4:0]  rtE, rdE;
+
+    // EX
+    wire [31:0] aluoutE, writedataE_out, pcbranchE;
+    wire [4:0]  writeregE;
+    wire        zeroE;
+
+    // EX/MEM
+    wire        regwriteM, memtoregM, memwriteM, branchM, zeroM;
+    wire [31:0] aluoutM, writedataM, pcbranchM;
+    wire [4:0]  writeregM;
+
+    // MEM
+    wire        pcsrcM;
+    wire [31:0] readdataM;
+
+    // MEM/WB
+    wire        regwriteW, memtoregW;
+    wire [31:0] aluoutW, readdataW;
+    wire [4:0]  writeregW;
+
+    // WB
+    wire [31:0] resultW;
+
+    fetch_stage IF(
+        .clk(clk), .reset(reset),
+        .pcbranchM(pcbranchM), .pcsrcM(pcsrcM),
+        .pcF(pcF), .pcplus4F(pcplus4F), .instrF(instrF)
+    );
+
+    IF_ID_reg IF_ID(
+        .clk(clk), .reset(reset),
+        .instrF(instrF), .pcplus4F(pcplus4F),
+        .instrD(instrD), .pcplus4D(pcplus4D)
+    );
+
+    decode_stage ID(
+        .clk(clk), .regwriteW(regwriteW),
+        .instrD(instrD), .pcplus4D(pcplus4D),
+        .resultW(resultW), .writeregW(writeregW),
+        .rd1D(rd1D), .rd2D(rd2D), .signimmD(signimmD),
+        .rtD(rtD), .rdD(rdD),
+        .regwriteD(regwriteD), .memtoregD(memtoregD), .memwriteD(memwriteD),
+        .branchD(branchD), .alusrcD(alusrcD), .regdstD(regdstD),
+        .alucontrolD(alucontrolD)
+    );
+
+    // FIX: renamed from ID_IX_reg to ID_EX_reg for clarity
+    ID_EX_reg ID_EX(
+        .clk(clk), .reset(reset),
+        .regwriteD(regwriteD), .memtoregD(memtoregD), .memwriteD(memwriteD),
+        .branchD(branchD), .alusrcD(alusrcD), .regdstD(regdstD),
+        .alucontrolD(alucontrolD),
+        .rd1D(rd1D), .rd2D(rd2D), .signimmD(signimmD), .pcplus4D(pcplus4D),
+        .rtD(rtD), .rdD(rdD),
+        .regwriteE(regwriteE), .memtoregE(memtoregE), .memwriteE(memwriteE),
+        .branchE(branchE), .alusrcE(alusrcE), .regdstE(regdstE),
+        .alucontrolE(alucontrolE),
+        .srcaE(srcaE), .writedataE(writedataE),
+        .signimmE(signimmE), .pcplus4E(pcplus4E),
+        .rtE(rtE), .rdE(rdE)
+    );
+
+    execute_stage EX(
+        .alucontrolE(alucontrolE),
+        .alusrcE(alusrcE), .regdstE(regdstE),
+        .rtE(rtE), .rdE(rdE),
+        .srcaE(srcaE),
+        .writedataE(writedataE),      // RD2 from ID/EX register
+        .signimmE(signimmE), .pcplus4E(pcplus4E),
+        .aluoutE(aluoutE),
+        .writedataE_out(writedataE_out), // FIX: separate output port for passthrough
+        .pcbranchE(pcbranchE),
+        .writeregE(writeregE),
+        .zeroE(zeroE)
+    );
+
+    EX_MEM_reg EX_MEM(
+        .clk(clk), .reset(reset),
+        .regwriteE(regwriteE), .memtoregE(memtoregE), .memwriteE(memwriteE),
+        .branchE(branchE), .zeroE(zeroE),
+        .aluoutE(aluoutE),
+        .writedataE(writedataE_out),  // FIX: use passthrough wire, not the ID/EX output
+        .pcbranchE(pcbranchE),
+        .writeregE(writeregE),
+        .regwriteM(regwriteM), .memtoregM(memtoregM), .memwriteM(memwriteM),
+        .branchM(branchM), .zeroM(zeroM),
+        .aluoutM(aluoutM), .writedataM(writedataM), .pcbranchM(pcbranchM),
+        .writeregM(writeregM)
+    );
+
+    memory_stage MEM(
+        .clk(clk),
+        .memwriteM(memwriteM), .branchM(branchM), .zeroM(zeroM),
+        .aluoutM(aluoutM), .writedataM(writedataM),
+        .pcsrcM(pcsrcM), .readdataM(readdataM)
+    );
+
+    MEM_WB_reg MEM_WB(
+        .clk(clk), .reset(reset),
+        .regwriteM(regwriteM), .memtoregM(memtoregM),
+        .aluoutM(aluoutM), .readdataM(readdataM),
+        .writeregM(writeregM),
+        .regwriteW(regwriteW), .memtoregW(memtoregW),
+        .aluoutW(aluoutW), .readdataW(readdataW),
+        .writeregW(writeregW)
+    );
+
+    writeback_stage WB(
+        .memtoregW(memtoregW),
+        .aluoutW(aluoutW), .readdataW(readdataW),
+        .resultW(resultW)
+    );
+
+endmodule
